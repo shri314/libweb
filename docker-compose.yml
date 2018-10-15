@@ -1,0 +1,13 @@
+version: '3.0'
+services:
+   clang-libcpp-boost-env:
+      image: shri314/clang-libcpp-boost
+      entrypoint: sleep infinity
+      restart: always
+      volumes:
+         - .:/src
+         - ./foo:/foo
+      privileged: true
+      ports:
+         - 8080:8080
+         - 8443:8443
