@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <memory>
 
-
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
@@ -188,7 +187,10 @@ class http_session : public std::enable_shared_from_this<http_session>
       void operator()(M&& msg)
       {
          // Allocate and store the work
-         items_.push_back([ msg = std::move(msg), this ]() mutable { owner_->schedule_write(msg); });
+         items_.push_back(
+               [ msg = std::move(msg), this ]() mutable {
+                  owner_->schedule_write(msg);
+               });
 
          // If there was no previous work, start this one
          if (items_.size() == 1)
@@ -207,9 +209,9 @@ class http_session : public std::enable_shared_from_this<http_session>
 
 public:
    // Take ownership of the socket
-   explicit http_session(tcp::socket&& socket, ssl::context& ctx)
+   explicit http_session(tcp::socket&& socket, std::shared_ptr<ssl::context> ctx)
       : socket_(std::move(socket))
-      , stream_(socket_, ctx)
+      , stream_(socket_, *ctx)
       , strand_(socket_.get_executor())
       , timer_(socket_.get_executor().context(), std::chrono::steady_clock::time_point::max())
       , queue_(this, 10)
@@ -359,53 +361,7 @@ public:
 
 //------------------------------------------------------------------------------
 
-// Accepts incoming connections and launches the sessions
-template <class SessionRunner>
-class listener : public std::enable_shared_from_this<listener<SessionRunner>>
-{
-   ssl::context& ctx_;
-   tcp::acceptor acceptor_;
-   tcp::socket accepted_socket_;
-
-public:
-   listener(boost::asio::io_context& ioc, ssl::context& ctx, tcp::endpoint endpoint)
-      : ctx_(ctx)
-      , acceptor_(ioc)
-      , accepted_socket_(ioc)
-   {
-      // Open the acceptor
-      acceptor_.open(endpoint.protocol());
-
-      // Allow address reuse
-      acceptor_.set_option(boost::asio::socket_base::reuse_address(true));
-
-      // Bind to the server address
-      acceptor_.bind(endpoint);
-
-      // Start listening for connections
-      acceptor_.listen(boost::asio::socket_base::max_listen_connections);
-   }
-
-   // Start accepting incoming connections
-   void run()
-   {
-      acceptor_.async_accept(accepted_socket_, [self = this->shared_from_this()](auto ec) {
-         if (ec)
-         {
-            fail(ec, "accept");
-         }
-         else
-         {
-            std::make_shared<SessionRunner>(std::move(self->accepted_socket_), self->ctx_)->run();
-         }
-
-         // Accept another connection
-         self->run();
-      });
-   }
-};
-
-//------------------------------------------------------------------------------
+#include "listener.h"
 
 int main(int argc, char* argv[])
 {
@@ -426,13 +382,13 @@ int main(int argc, char* argv[])
    boost::asio::io_context ioc{threads};
 
    // The SSL context is required, and holds certificates
-   ssl::context ctx{ssl::context::sslv23};
+   auto ctx = std::make_shared<ssl::context>(ssl::context::sslv23);
 
    // This holds the self-signed certificate used by the server
-   load_server_certificate(ctx);
+   load_server_certificate(*ctx);
 
    // Create and launch a listening port
-   std::make_shared<listener<http_session>>(ioc, ctx, tcp::endpoint{address, port})->run();
+   std::make_shared<listener<http_session>>(ioc, tcp::endpoint{address, port})->run(ctx);
 
    // Capture SIGINT and SIGTERM to perform a clean shutdown
    boost::asio::signal_set signals(ioc, SIGINT, SIGTERM);

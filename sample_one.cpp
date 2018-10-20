@@ -258,51 +258,7 @@ public:
 
 //------------------------------------------------------------------------------
 
-// Accepts incoming connections and launches the sessions
-template <class SessionRunner>
-class listener : public std::enable_shared_from_this<listener<SessionRunner>>
-{
-   tcp::acceptor acceptor_;
-   tcp::socket accepted_socket_;
-
-public:
-   listener(boost::asio::io_context& ioc, tcp::endpoint endpoint)
-      : acceptor_(ioc)
-      , accepted_socket_(ioc)
-   {
-      // Open the acceptor
-      acceptor_.open(endpoint.protocol());
-
-      // Allow address reuse
-      acceptor_.set_option(boost::asio::socket_base::reuse_address(true));
-
-      // Bind to the server address
-      acceptor_.bind(endpoint);
-
-      // Start listening for connections
-      acceptor_.listen(boost::asio::socket_base::max_listen_connections);
-   }
-
-   // Start accepting incoming connections
-   void run()
-   {
-      acceptor_.async_accept(accepted_socket_, [self = this->shared_from_this()](auto ec) {
-         if (ec)
-         {
-            fail(ec, "accept");
-         }
-         else
-         {
-            std::make_shared<SessionRunner>(std::move(self->accepted_socket_))->run();
-         }
-
-         // Accept another connection
-         self->run();
-      });
-   }
-};
-
-//------------------------------------------------------------------------------
+#include "listener.h"
 
 int main(int argc, char* argv[])
 {
@@ -332,11 +288,13 @@ int main(int argc, char* argv[])
    // Run the I/O service on the requested number of threads
    std::vector<std::thread> v;
    v.reserve(threads - 1);
-   for (auto i = threads - 1; i > 0; --i) v.emplace_back([&ioc] { ioc.run(); });
+   for (auto i = threads - 1; i > 0; --i)
+      v.emplace_back([&ioc] { ioc.run(); });
    ioc.run();
 
    // Block until all the threads exit
-   for (auto& t : v) t.join();
+   for (auto& t : v)
+      t.join();
 
    return EXIT_SUCCESS;
 }
